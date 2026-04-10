@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAGO PRO 3D - Physics Editor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+        :root {
+            --brand-primary: #8b5cf6;
+            --brand-secondary: #ec4899;
+            --bg-editor: #0f172a;
+            --sidebar-bg: rgba(15, 23, 42, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-editor);
+            color: var(--text-main);
+            margin: 0;
+            overflow: hidden;
+            height: 100vh;
+            user-select: none;
+        }
+
+        /* LAGO PRO Glass UI Style */
+        .glass-ui {
+            background: var(--sidebar-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+        }
+
+        .gradient-text {
+            background: linear-gradient(135deg, #a78bfa, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Toolbar Buttons */
+        .tool-item {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .tool-item:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+        }
+        .tool-item.active {
+            background: var(--brand-primary);
+            color: white;
+            box-shadow: 0 0 15px rgba(139, 92, 246, 0.4);
+        }
+
+        /* 3D Viewport */
+        #viewport {
+            position: absolute;
+            top: 64px; /* header height */
+            left: 80px; /* sidebar width */
+            right: 320px; /* properties panel width */
+            bottom: 0;
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
+            z-index: 0;
+        }
+
+        /* Custom Inputs */
+        .input-lago {
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 13px;
+            color: white;
+            outline: none;
+            transition: all 0.2s;
+        }
+        .input-lago:focus {
+            border-color: var(--brand-primary);
+            background: rgba(255,255,255,0.1);
+        }
+
+        input[type="range"] { 
+            accent-color: var(--brand-primary); 
+            height: 4px; 
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            -webkit-appearance: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        input[type="color"] {
+            -webkit-appearance: none; border: none; width: 32px; height: 32px;
+            border-radius: 8px; cursor: pointer; background: none; padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 8px; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        .btn-action {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #e2e8f0;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .btn-action:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: var(--brand-primary);
+        }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body class="antialiased">
+
+    <!-- Top Header -->
+    <header class="h-16 border-b border-white/10 flex items-center justify-between px-6 glass-ui relative z-50">
+        <div class="flex items-center gap-6">
+            <div class="font-black text-2xl tracking-tighter text-white flex items-center gap-1.5">
+                LAGO <span class="gradient-text font-black tracking-tight">3D</span>
+            </div>
+            <div class="h-6 w-px bg-white/10 mx-2"></div>
+            
+            <!-- Global Physics Controls -->
+            <div class="flex items-center gap-3">
+                <button id="btn-play" class="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold transition hover:bg-emerald-500/30">
+                    <div id="status-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                    <span id="play-text">PLAYING</span>
+                </button>
+                <button id="btn-gravity" class="px-3 py-1.5 bg-brand-primary text-white rounded-lg text-xs font-bold transition hover:opacity-80">
+                    GRAVITY: ON
+                </button>
+                <div class="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg" title="중력 가속도 조절">
+                    <span class="text-[10px] font-bold text-slate-400">VAL</span>
+                    <input type="number" id="input-gravity" value="-9.8" step="0.5" class="w-12 bg-transparent text-white text-xs font-mono outline-none text-right">
+                </div>
+            </div>
+        </div>
+        
+        <div class="flex items-center gap-4">
+            <div class="text-right">
+                <div class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">FPS</div>
+                <div id="fps-display" class="text-sm font-mono text-brand-primary font-bold">60</div>
+            </div>
+            <button id="btn-clear" class="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-bold rounded-xl transition border border-red-500/20">
+                Clear All
+            </button>
+        </div>
+    </header>
+
+    <div class="flex h-[calc(100vh-64px)] relative">
+        
+        <!-- Left Toolbar -->
+        <aside class="w-20 glass-ui border-r border-white/10 flex flex-col items-center py-6 gap-4 z-40">
+            <div class="text-[10px] text-slate-500 font-bold mb-2">SPAWN</div>
+            <button id="spawn-cube" class="tool-item w-12 h-12 rounded-xl" title="Add Cube">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+            </button>
+            <button id="spawn-sphere" class="tool-item w-12 h-12 rounded-xl" title="Add Sphere">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"></circle></svg>
+            </button>
+            <button id="spawn-cylinder" class="tool-item w-12 h-12 rounded-xl" title="Add Cylinder">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path></svg>
+            </button>
+            <button id="spawn-cone" class="tool-item w-12 h-12 rounded-xl" title="Add Cone">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2L2 20h20L12 2z"></path></svg>
+            </button>
+            
+            <div class="w-10 h-px bg-white/10 my-2"></div>
+            
+            <div class="text-[10px] text-slate-500 font-bold mb-2">TOOLS</div>
+            <button id="tool-translate" class="tool-item active w-12 h-12 rounded-xl" title="Move (W)">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 21h4M12 21v-4m0-14v4m0-4L9 6m3-3l3 3M4 12h4m-4 0l3-3m-3 3l3 3m14-3h-4m4 0l-3 3m3-3l-3-3"></path></svg>
+            </button>
+            <button id="tool-rotate" class="tool-item w-12 h-12 rounded-xl" title="Rotate (E)">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9"></path></svg>
+            </button>
+            <button id="tool-scale" class="tool-item w-12 h-12 rounded-xl" title="Scale (R)">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5"></path></svg>
+            </button>
+        </aside>
+
+        <!-- 3D Canvas Area -->
+        <div id="viewport"></div>
+
+        <!-- Right Properties Panel -->
+        <aside class="w-80 glass-ui border-l border-white/10 flex flex-col z-40 absolute right-0 top-0 bottom-0 transition-transform duration-300" id="properties-panel">
+            
+            <!-- Default / Empty State -->
+            <div id="panel-empty" class="flex-1 flex flex-col items-center justify-center p-6 text-center opacity-100 transition-opacity">
+                <svg class="w-12 h-12 text-slate-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                <p class="text-sm text-slate-400 font-medium">객체를 선택하여<br>속성을 편집하세요</p>
+            </div>
+
+            <!-- Selected Object Properties -->
+            <div id="panel-selected" class="hidden flex-1 flex flex-col overflow-hidden">
+                <div class="p-5 border-b border-white/10">
+                    <div class="flex justify-between items-center mb-1">
+                        <span id="obj-type" class="text-xs font-black text-brand-primary uppercase tracking-widest">CUBE</span>
+                        <button id="btn-delete" class="text-red-400 hover:text-red-300 transition" title="Delete (Del)">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>
+                    <span id="obj-id" class="text-[10px] text-slate-500 font-mono">ID: #0000</span>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-5 space-y-6">
+                    <!-- Transform -->
+                    <section>
+                        <label class="text-[10px] font-black text-slate-500 mb-3 block uppercase tracking-widest">Transform</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div>
+                                <span class="text-[9px] text-slate-500 block text-center mb-1">X</span>
+                                <input type="text" id="prop-px" class="input-lago text-center font-mono" readonly>
+                            </div>
+                            <div>
+                                <span class="text-[9px] text-slate-500 block text-center mb-1">Y</span>
+                                <input type="text" id="prop-py" class="input-lago text-center font-mono" readonly>
+                            </div>
+                            <div>
+                                <span class="text-[9px] text-slate-500 block text-center mb-1">Z</span>
+                                <input type="text" id="prop-pz" class="input-lago text-center font-mono" readonly>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Appearance -->
+                    <section>
+                        <label class="text-[10px] font-black text-slate-500 mb-3 block uppercase tracking-widest">Material</label>
+                        <div class="flex items-center gap-3 mb-4 p-3 bg-white/5 border border-white/5 rounded-xl">
+                            <input type="color" id="prop-color">
+                            <div class="flex-1">
+                                <div class="text-xs font-semibold text-white">Color</div>
+                                <div class="text-[10px] text-slate-400">Base Albedo</div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div>
+                                <div class="flex justify-between text-[10px] font-bold text-slate-400 mb-1">
+                                    <span>Roughness</span><span id="val-rough">0.5</span>
+                                </div>
+                                <input type="range" id="prop-roughness" min="0" max="1" step="0.05" class="w-full">
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-[10px] font-bold text-slate-400 mb-1">
+                                    <span>Metalness</span><span id="val-metal">0.2</span>
+                                </div>
+                                <input type="range" id="prop-metalness" min="0" max="1" step="0.05" class="w-full">
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Physics Rules -->
+                    <section>
+                        <label class="text-[10px] font-black text-brand-primary mb-3 block uppercase tracking-widest">Physics Dynamics</label>
+                        <div class="space-y-4 p-4 bg-brand-primary/10 border border-brand-primary/20 rounded-xl">
+                            <div>
+                                <div class="flex justify-between text-[10px] font-bold text-slate-300 mb-1">
+                                    <span>Bounciness (Restitution)</span><span id="val-bounce">0.5</span>
+                                </div>
+                                <input type="range" id="prop-bounce" min="0" max="1" step="0.05" class="w-full">
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-[10px] font-bold text-slate-300 mb-1">
+                                    <span>Friction</span><span id="val-fric">0.3</span>
+                                </div>
+                                <input type="range" id="prop-friction" min="0" max="1" step="0.05" class="w-full">
+                            </div>
+                            <div class="pt-2 flex gap-2">
+                                <button id="btn-reset-vel" class="btn-action flex-1 text-center">Stop Motion</button>
+                                <button id="btn-clone" class="btn-action flex-1 text-center border-brand-primary text-brand-primary">Clone</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+            
+            <!-- Bottom Stats -->
+            <div class="h-12 border-t border-white/10 flex items-center justify-between px-5 text-[10px] text-slate-500 font-mono">
+                <span>ENTITIES: <span id="stat-count" class="text-white font-bold">0</span></span>
+                <span>ENGINE: CUSTOM</span>
+            </div>
+        </aside>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+        const $ = id => document.getElementById(id);
+
+        class LagoEngine {
+            constructor() {
+                // 물리 엔진 설정 (안정화 튜닝)
+                this.GRAVITY = -9.81; 
+                this.SUBSTEPS = 4; // 연산 횟수를 줄여 렉 최소화 (최적화)
+                this.DAMPING = 0.98; // 공기 저항
+                this.SLEEP_VELOCITY = 0.5; // 슬립 판정 속도
+
+                // 상태
+                this.entities = [];
+                this.selected = null;
+                this.isPlaying = true;
+                this.useGravity = true;
+                this.clock = new THREE.Clock();
+
+                // 프레임 측정
+                this.frameCount = 0;
+                this.lastTime = performance.now();
+
+                this.init();
+            }
+
+            init() {
+                // Scene 구성 (다크 테마)
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color('#0f172a');
+                this.scene.fog = new THREE.Fog('#0f172a', 30, 150);
+
+                this.camera = new THREE.PerspectiveCamera(45, (window.innerWidth - 400) / (window.innerHeight - 64), 0.1, 1000);
+                this.camera.position.set(20, 20, 30);
+                
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+                
+                const vp = document.getElementById('viewport');
+                this.renderer.setSize(vp.clientWidth, vp.clientHeight);
+                // 픽셀 비율을 1.5로 제한하여 모바일/고해상도 환경에서 렉 방지
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); 
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                vp.appendChild(this.renderer.domElement);
+
+                // 조명 설정
+                const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+                this.scene.add(ambient);
+
+                const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+                dirLight.position.set(15, 30, 15);
+                dirLight.castShadow = true;
+                // 그림자 맵 최적화 (2048 -> 1024)
+                dirLight.shadow.mapSize.width = 1024;
+                dirLight.shadow.mapSize.height = 1024;
+                dirLight.shadow.camera.near = 0.5;
+                dirLight.shadow.camera.far = 100;
+                const d = 30;
+                dirLight.shadow.camera.left = -d;
+                dirLight.shadow.camera.right = d;
+                dirLight.shadow.camera.top = d;
+                dirLight.shadow.camera.bottom = -d;
+                this.scene.add(dirLight);
+
+                // 환경 맵 (반사광 효과)
+                const hemiLight = new THREE.HemisphereLight(0x8b5cf6, 0x0f172a, 0.6);
+                this.scene.add(hemiLight);
+
+                // 다크 테마 바닥 및 그리드
+                const grid = new THREE.GridHelper(100, 50, 0x334155, 0x1e293b);
+                grid.position.y = 0;
+                this.scene.add(grid);
+
+                const floorMat = new THREE.MeshStandardMaterial({ 
+                    color: 0x0f172a, 
+                    roughness: 0.8,
+                    metalness: 0.2
+                });
+                const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), floorMat);
+                floor.rotation.x = -Math.PI / 2;
+                floor.position.y = -0.01; // 그리드와 겹침 방지
+                floor.receiveShadow = true;
+                this.scene.add(floor);
+
+                // 컨트롤
+                this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.dampingFactor = 0.05;
+                this.controls.maxPolarAngle = Math.PI / 2 - 0.05; // 땅 아래로 안가게
+
+                this.transform = new TransformControls(this.camera, this.renderer.domElement);
+                this.transform.addEventListener('dragging-changed', (e) => {
+                    this.controls.enabled = !e.value;
+                    if (this.selected) {
+                        // 드래그 중 물리 효과 초기화
+                        this.selected.userData.vel.set(0,0,0);
+                        this.selected.userData.isSleeping = false;
+                    }
+                });
+                this.scene.add(this.transform);
+
+                this.raycaster = new THREE.Raycaster();
+                this.mouse = new THREE.Vector2();
+
+                this.bindEvents();
+                this.startLoop();
+
+                // 초기 샘플 객체 생성
+                setTimeout(() => {
+                    this.spawn('cube', new THREE.Vector3(-3, 10, 0), 0x8b5cf6);
+                    this.spawn('sphere', new THREE.Vector3(3, 15, 0), 0xec4899);
+                }, 100);
+            }
+
+            bindEvents() {
+                // 상단 버튼
+                $('btn-play').onclick = () => {
+                    this.isPlaying = !this.isPlaying;
+                    $('play-text').innerText = this.isPlaying ? "PLAYING" : "PAUSED";
+                    $('btn-play').className = this.isPlaying 
+                        ? "flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold transition hover:bg-emerald-500/30"
+                        : "flex items-center gap-2 px-3 py-1.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-bold transition hover:bg-amber-500/30";
+                    $('status-dot').className = this.isPlaying ? "w-2 h-2 rounded-full bg-emerald-400 animate-pulse" : "w-2 h-2 rounded-full bg-amber-400";
+                    
+                    // 재생 재개 시 잠든 객체 깨우기
+                    if(this.isPlaying) this.entities.forEach(e => e.userData.isSleeping = false);
+                };
+
+                $('btn-gravity').onclick = () => {
+                    this.useGravity = !this.useGravity;
+                    $('btn-gravity').innerText = this.useGravity ? "GRAVITY: ON" : "GRAVITY: OFF";
+                    $('btn-gravity').className = this.useGravity
+                        ? "px-3 py-1.5 bg-brand-primary text-white rounded-lg text-xs font-bold transition hover:opacity-80"
+                        : "px-3 py-1.5 bg-white/10 text-slate-400 border border-white/10 rounded-lg text-xs font-bold transition hover:bg-white/20";
+                    if(this.useGravity) this.entities.forEach(e => e.userData.isSleeping = false);
+                };
+
+                $('input-gravity').oninput = (e) => {
+                    this.GRAVITY = parseFloat(e.target.value) || 0;
+                    if(this.useGravity) this.entities.forEach(ent => ent.userData.isSleeping = false);
+                };
+
+                $('btn-clear').onclick = () => {
+                    [...this.entities].forEach(e => this.removeEntity(e));
+                };
+
+                // 툴바
+                $('spawn-cube').onclick = () => this.spawn('cube');
+                $('spawn-sphere').onclick = () => this.spawn('sphere');
+                $('spawn-cylinder').onclick = () => this.spawn('cylinder');
+                $('spawn-cone').onclick = () => this.spawn('cone');
+
+                const setGizmo = (mode, btnId) => {
+                    this.transform.setMode(mode);
+                    ['tool-translate', 'tool-rotate', 'tool-scale'].forEach(id => {
+                        $(id).classList.toggle('active', id === btnId);
+                    });
+                };
+                $('tool-translate').onclick = () => setGizmo('translate', 'tool-translate');
+                $('tool-rotate').onclick = () => setGizmo('rotate', 'tool-rotate');
+                $('tool-scale').onclick = () => setGizmo('scale', 'tool-scale');
+
+                // 속성 패널 바인딩
+                $('prop-color').oninput = e => {
+                    if(this.selected) this.selected.material.color.set(e.target.value);
+                };
+                $('prop-roughness').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.material.roughness = parseFloat(e.target.value);
+                    $('val-rough').innerText = e.target.value;
+                };
+                $('prop-metalness').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.material.metalness = parseFloat(e.target.value);
+                    $('val-metal').innerText = e.target.value;
+                };
+                $('prop-bounce').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.userData.restitution = parseFloat(e.target.value);
+                    $('val-bounce').innerText = e.target.value;
+                };
+                $('prop-friction').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.userData.friction = parseFloat(e.target.value);
+                    $('val-fric').innerText = e.target.value;
+                };
+                $('btn-reset-vel').onclick = () => {
+                    if(this.selected) {
+                        this.selected.userData.vel.set(0,0,0);
+                        this.selected.userData.isSleeping = true;
+                    }
+                };
+                $('btn-clone').onclick = () => {
+                    if(this.selected) {
+                        const c = this.selected.material.color.getHex();
+                        this.spawn(this.selected.userData.type, this.selected.position.clone().add(new THREE.Vector3(2, 2, 0)), c);
+                    }
+                };
+                $('btn-delete').onclick = () => {
+                    if(this.selected) this.removeEntity(this.selected);
+                };
+
+                // 마우스 인터랙션
+                const vp = document.getElementById('viewport');
+                vp.addEventListener('pointerdown', (e) => {
+                    if (this.transform.dragging) return;
+                    
+                    const rect = vp.getBoundingClientRect();
+                    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                    
+                    this.raycaster.setFromCamera(this.mouse, this.camera);
+                    const intersects = this.raycaster.intersectObjects(this.entities);
+                    
+                    if (intersects.length > 0) {
+                        this.select(intersects[0].object);
+                    } else {
+                        this.select(null);
+                    }
+                });
+
+                // 단축키
+                window.addEventListener('keydown', (e) => {
+                    if(e.target.tagName === 'INPUT') return;
+                    const key = e.key.toLowerCase();
+                    if (key === 'w') $('tool-translate').click();
+                    if (key === 'e') $('tool-rotate').click();
+                    if (key === 'r') $('tool-scale').click();
+                    if (key === 'delete' || key === 'backspace') $('btn-delete').click();
+                });
+
+                window.addEventListener('resize', () => {
+                    const rect = vp.getBoundingClientRect();
+                    this.camera.aspect = rect.width / rect.height;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(rect.width, rect.height);
+                });
+            }
+
+            spawn(type, pos, hexColor) {
+                let geo;
+                if (type === 'cube') geo = new THREE.BoxGeometry(2, 2, 2);
+                else if (type === 'sphere') geo = new THREE.SphereGeometry(1.2, 32, 32);
+                else if (type === 'cylinder') geo = new THREE.CylinderGeometry(1, 1, 2, 32);
+                else if (type === 'cone') geo = new THREE.ConeGeometry(1.2, 2.5, 32);
+
+                const color = hexColor || new THREE.Color().setHSL(Math.random(), 0.7, 0.6).getHex();
+
+                const mat = new THREE.MeshStandardMaterial({
+                    color: color,
+                    roughness: 0.3,
+                    metalness: 0.2
+                });
+
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+
+                mesh.position.copy(pos || new THREE.Vector3(
+                    (Math.random() - 0.5) * 10,
+                    15 + Math.random() * 5,
+                    (Math.random() - 0.5) * 10
+                ));
+
+                // 물리 데이터
+                let radius = Math.sqrt(3);
+                if (type === 'sphere') radius = 1.2;
+                else if (type === 'cylinder') radius = 1.4;
+                else if (type === 'cone') radius = 1.3;
+
+                mesh.userData = {
+                    type,
+                    vel: new THREE.Vector3(0, 0, 0),
+                    mass: 1.0,
+                    restitution: 0.5, // 반발력
+                    friction: 0.4,    // 마찰력
+                    isSleeping: false,
+                    radius: radius // 근사 반경
+                };
+
+                this.scene.add(mesh);
+                this.entities.push(mesh);
+                $('stat-count').innerText = this.entities.length;
+                
+                this.select(mesh);
+                return mesh;
+            }
+
+            removeEntity(obj) {
+                this.scene.remove(obj);
+                if(obj.geometry) obj.geometry.dispose();
+                if(obj.material) obj.material.dispose();
+                this.entities = this.entities.filter(e => e !== obj);
+                if(this.selected === obj) this.select(null);
+                $('stat-count').innerText = this.entities.length;
+            }
+
+            select(obj) {
+                this.selected = obj;
+                const pEmpty = document.getElementById('panel-empty');
+                const pSel = document.getElementById('panel-selected');
+                
+                if (obj) {
+                    this.transform.attach(obj);
+                    pEmpty.classList.add('hidden');
+                    pSel.classList.remove('hidden');
+                    
+                    // UI Sync
+                    $('obj-type').innerText = obj.userData.type;
+                    $('obj-id').innerText = `ID: #${obj.id}`;
+                    $('prop-color').value = "#" + obj.material.color.getHexString();
+                    
+                    $('prop-roughness').value = obj.material.roughness;
+                    $('val-rough').innerText = obj.material.roughness.toFixed(2);
+                    
+                    $('prop-metalness').value = obj.material.metalness;
+                    $('val-metal').innerText = obj.material.metalness.toFixed(2);
+                    
+                    $('prop-bounce').value = obj.userData.restitution;
+                    $('val-bounce').innerText = obj.userData.restitution.toFixed(2);
+                    
+                    $('prop-friction').value = obj.userData.friction;
+                    $('val-fric').innerText = obj.userData.friction.toFixed(2);
+
+                } else {
+                    this.transform.detach();
+                    pEmpty.classList.remove('hidden');
+                    pSel.classList.add('hidden');
+                }
+            }
+
+            // 최적화된 물리 연산
+            solvePhysics(dt) {
+                if (!this.isPlaying) return;
+
+                // 지나치게 큰 dt 방지 (탭 이동 시 렉 방지)
+                const safeDt = Math.min(dt, 0.05); 
+                const sdt = safeDt / this.SUBSTEPS;
+
+                for (let step = 0; step < this.SUBSTEPS; step++) {
+                    for (let i = 0; i < this.entities.length; i++) {
+                        const ent = this.entities[i];
+                        if (ent === this.selected && this.transform.dragging) continue;
+                        
+                        const p = ent.userData;
+                        if (p.isSleeping) continue;
+
+                        // 중력
+                        if (this.useGravity) {
+                            p.vel.y += this.GRAVITY * sdt;
+                        }
+
+                        // 공기 저항 (속도 감쇠)
+                        p.vel.multiplyScalar(this.DAMPING);
+
+                        // 위치 적용
+                        ent.position.addScaledVector(p.vel, sdt);
+
+                        // 1. 바닥 충돌 처리 (안정화)
+                        const scaleY = ent.scale.y;
+                        let floorY = scaleY; // cube and cylinder
+                        if (p.type === 'sphere') floorY = p.radius * scaleY;
+                        else if (p.type === 'cone') floorY = 1.25 * scaleY;
+                        
+                        if (ent.position.y < floorY) {
+                            ent.position.y = floorY;
+                            
+                            if (p.vel.y < 0) {
+                                // 속도가 낮으면 바운스 멈추고 마찰 적용
+                                if (Math.abs(p.vel.y) < this.SLEEP_VELOCITY) {
+                                    p.vel.y = 0;
+                                    p.vel.x *= (1 - p.friction);
+                                    p.vel.z *= (1 - p.friction);
+                                    
+                                    // 완전 정지 판정
+                                    if (p.vel.lengthSq() < 0.01) {
+                                        p.isSleeping = true;
+                                        p.vel.set(0,0,0);
+                                    }
+                                } else {
+                                    // 튕기기
+                                    p.vel.y *= -p.restitution;
+                                }
+                            }
+                        }
+
+                        // 2. 다른 물체와의 충돌 (단순 구체 기반 충돌로 최적화)
+                        for (let j = i + 1; j < this.entities.length; j++) {
+                            this.resolveCollision(ent, this.entities[j]);
+                        }
+
+                        // 화면 밖으로 떨어짐 방지
+                        if (ent.position.y < -50 || ent.position.length() > 200) {
+                            ent.position.set(0, 20, 0);
+                            p.vel.set(0,0,0);
+                        }
+                    }
+                }
+            }
+
+            resolveCollision(a, b) {
+                const pa = a.userData;
+                const pb = b.userData;
+
+                // 거리를 이용한 단순 충돌 감지
+                const distVec = new THREE.Vector3().subVectors(a.position, b.position);
+                const distSq = distVec.lengthSq();
+                
+                // Effective radii (스케일 고려)
+                const ra = pa.type === 'sphere' ? pa.radius * a.scale.x : a.scale.x * 1.3;
+                const rb = pb.type === 'sphere' ? pb.radius * b.scale.x : b.scale.x * 1.3;
+                const minDist = ra + rb;
+
+                if (distSq < minDist * minDist && distSq > 0.001) {
+                    const dist = Math.sqrt(distSq);
+                    const normal = distVec.divideScalar(dist);
+                    const overlap = minDist - dist;
+
+                    // 겹침 밀어내기 (위치 보정)
+                    a.position.addScaledVector(normal, overlap * 0.5);
+                    b.position.addScaledVector(normal, -overlap * 0.5);
+
+                    // 잠든 객체 깨우기
+                    pa.isSleeping = false;
+                    pb.isSleeping = false;
+
+                    // 충격량 반사
+                    const relVel = new THREE.Vector3().subVectors(pa.vel, pb.vel);
+                    const sepVel = relVel.dot(normal);
+
+                    // 서로 다가가고 있을 때만 반사
+                    if (sepVel < 0) {
+                        const e = Math.min(pa.restitution, pb.restitution);
+                        // 박치기 효과를 강하게 주기 위해 반발 계수에 1.5배 증폭
+                        const j = -(1 + e) * sepVel / (1/pa.mass + 1/pb.mass) * 1.5;
+
+                        pa.vel.addScaledVector(normal, j / pa.mass);
+                        pb.vel.addScaledVector(normal, -j / pb.mass);
+                    }
+                }
+            }
+
+            startLoop() {
+                const animate = () => {
+                    requestAnimationFrame(animate);
+
+                    const dt = this.clock.getDelta();
+                    this.solvePhysics(dt);
+
+                    this.controls.update();
+                    this.renderer.render(this.scene, this.camera);
+
+                    // UI 업데이트
+                    if (this.selected) {
+                        document.getElementById('prop-px').value = this.selected.position.x.toFixed(1);
+                        document.getElementById('prop-py').value = this.selected.position.y.toFixed(1);
+                        document.getElementById('prop-pz').value = this.selected.position.z.toFixed(1);
+                    }
+
+                    // FPS 계산
+                    this.frameCount++;
+                    const now = performance.now();
+                    if (now - this.lastTime >= 1000) {
+                        document.getElementById('fps-display').innerText = this.frameCount;
+                        this.frameCount = 0;
+                        this.lastTime = now;
+                    }
+                };
+                animate();
+            }
+        }
+
+        // 앱 초기화
+        window.onload = () => {
+            console.log("%c LAGO 3D ENGINE ONLINE ", "background: #8b5cf6; color: white; font-weight: bold; border-radius: 4px;");
+            new LagoEngine();
+        };
+    </script>
+</body>
+</html>
