@@ -151,9 +151,9 @@
             
             <div id="auth-spinner" class="spinner"></div>
 
-            <h3 id="auth-title" class="text-xl font-bold text-white mb-2">접속 권한 확인 중</h3>
+            <h3 id="auth-title" class="text-xl font-bold text-white mb-2">접속 감지 중</h3>
             <p id="auth-desc" class="text-[13px] text-slate-400 font-medium mb-6 line-height-relaxed">
-                서버와 통신하여 접근 권한을 확인하고 있습니다...
+                시스템 환경을 확인하고 있습니다...
             </p>
             
             <!-- 단독 접속 등 권한 실패 시 나타날 UI -->
@@ -165,7 +165,7 @@
                 <input type="password" id="manual-key" class="input-lago font-mono" placeholder="접속 키">
                 <button onclick="window.manualLoginSubmit()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold mt-2 transition">수동 인증 시도</button>
             </div>
-            <button onclick="document.getElementById('debug-login-form').style.display='block'" class="mt-6 text-[10px] text-slate-600 hover:text-slate-400 underline transition">테스트용 수동 로그인 폼 열기</button>
+            <button onclick="document.getElementById('debug-login-form').style.display='block'" class="mt-6 text-[10px] text-slate-600 hover:text-slate-400 underline transition">수동 로그인 폼 (테스트용)</button>
         </div>
     </div>
 
@@ -357,7 +357,7 @@
 
         const $ = id => document.getElementById(id);
 
-        // --- 1. 철통보안 자동 인증 시스템 로직 (LocalStorage 우선) ---
+        // --- 1. 자동 인증 시스템 로직 (강력한 추출 + LocalStorage 보존) ---
         const firebaseConfig = { 
             databaseURL: "https://class-chat-6-7-default-rtdb.asia-southeast1.firebasedatabase.app/" 
         };
@@ -373,6 +373,10 @@
             const authAction = $('auth-action-container');
             const authSpinner = $('auth-spinner');
 
+            authTitle.innerText = "서버 권한 확인 중...";
+            authDesc.innerHTML = `<span style="color:#a78bfa; font-weight:bold;">${accessName}</span> 계정의 키를 확인하고 있습니다.`;
+            authSpinner.style.display = 'block';
+
             try {
                 const snap = await db.ref('lago_pro_3d_keys/' + accessName).once('value');
                 const data = snap.val();
@@ -381,13 +385,9 @@
                     // 인증 성공!
                     $('editor-username').innerText = accessName;
                     
-                    // 로컬 스토리지에 확실하게 저장 (다음 접속 시 파라미터 없어도 되도록)
+                    // 성공했을 때만 로컬 스토리지에 저장! (새로고침 시 유지하기 위함)
                     localStorage.setItem('lago_pro_3d_name', accessName);
                     localStorage.setItem('lago_pro_3d_key', accessKey);
-
-                    // --- [수정됨] URL 정리 기능 제거 ---
-                    // 개발 환경이나 Blob URL에서 발생할 수 있는 DOMException 방지
-                    // window.history.replaceState({}, document.title, window.location.pathname); 
 
                     $('login-section').classList.remove('active');
                     $('app-container').classList.add('active');
@@ -398,14 +398,14 @@
                         }, 200);
                     }
                 } else {
-                    // 인증 실패
+                    // 인증 실패 (키 불일치 또는 데이터 없음)
                     localStorage.removeItem('lago_pro_3d_name');
                     localStorage.removeItem('lago_pro_3d_key');
 
                     authSpinner.style.display = 'none';
                     authTitle.innerText = "인증 실패 ❌";
                     authTitle.classList.add("text-red-400");
-                    authDesc.innerHTML = "권한이 만료되었거나 키가 일치하지 않습니다.<br>메인 에디터에서 다시 로그인해주세요.";
+                    authDesc.innerHTML = `<span style="color:#f87171;">요청된 이름: ${accessName}</span><br>키가 서버의 정보와 일치하지 않거나 만료되었습니다.<br>메인 에디터에서 다시 접속해주세요.`;
                     authAction.innerHTML = `<a href="https://ramalok3846.github.io/lagoprotest/" class="w-full inline-block bg-white/10 hover:bg-white/20 text-white border border-white/10 py-3.5 rounded-xl font-bold transition">메인으로 돌아가기</a>`;
                 }
             } catch (e) {
@@ -417,53 +417,68 @@
         }
 
         window.onload = async function() {
-            const authTitle = $('auth-title');
-            const authDesc = $('auth-desc');
-            const authAction = $('auth-action-container');
-            const authSpinner = $('auth-spinner');
+            let accessName = null;
+            let accessKey = null;
 
-            // 1순위: 로컬 스토리지에서 먼저 찾기 (가장 안전하고 URL 노출 없음)
-            let accessName = localStorage.getItem('lago_pro_3d_name');
-            let accessKey = localStorage.getItem('lago_pro_3d_key');
+            // [1] 가장 확실한 방법: URL의 파라미터(Search) 읽기
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.has('name') && urlParams.has('key')) {
+                    accessName = urlParams.get('name');
+                    accessKey = urlParams.get('key');
+                }
+            } catch(e) {}
 
-            // 2순위: 로컬 스토리지에 없으면 URL 파라미터에서 추출 시도 (정규식 기반 강력한 추출)
+            // [2] 만약 URL Hash(#) 뒤에 붙어있다면 거기서 읽기
+            if (!accessName || !accessKey) {
+                try {
+                    const hash = window.location.hash;
+                    if(hash.includes('?')) {
+                        const hashParams = new URLSearchParams(hash.substring(hash.indexOf('?')));
+                        if (hashParams.has('name') && hashParams.has('key')) {
+                            accessName = hashParams.get('name');
+                            accessKey = hashParams.get('key');
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            // [3] 최후의 보루: 정규식으로 직접 추출 (URL 인코딩 고려)
             if (!accessName || !accessKey) {
                 try {
                     const href = window.location.href;
-                    // 해시(#) 뒤에 붙거나 파라미터 사이에 붙는 경우 등 모두 대응
                     const nameMatch = href.match(/[?&]name=([^&#]*)/);
                     const keyMatch = href.match(/[?&]key=([^&#]*)/);
-                    
-                    // 한글 인코딩(%EC%B5%9C...) 깨짐 방지를 위해 decodeURIComponent 사용
                     if (nameMatch) accessName = decodeURIComponent(nameMatch[1]);
                     if (keyMatch) accessKey = decodeURIComponent(keyMatch[1]);
-                } catch(e) {
-                    console.warn("URL 파싱 에러", e);
-                }
+                } catch(e) {}
             }
 
-            // 둘 다 아무것도 찾지 못한 경우 (단독 접속 시도)
+            // [4] URL에서 아무것도 찾지 못했다면 -> 새로고침 상황이라고 간주하고 LocalStorage 확인
             if (!accessName || !accessKey) {
-                authSpinner.style.display = 'none';
-                authTitle.innerText = "접근 권한 없음 🚫";
-                authTitle.classList.add("text-red-400");
-                authDesc.innerHTML = "LAGO PRO 3D는 단독으로 실행할 수 없습니다.<br>LAGO PRO 메인 에디터에서 인증을 거쳐야 합니다.";
-                authAction.innerHTML = `<a href="https://ramalok3846.github.io/lagoprotest/" class="w-full inline-block bg-gradient-to-r from-violet-600 to-pink-600 text-white py-3.5 rounded-xl font-bold hover:brightness-110 transition shadow-lg shadow-violet-900/40">LAGO PRO 메인으로 이동</a>`;
+                accessName = localStorage.getItem('lago_pro_3d_name');
+                accessKey = localStorage.getItem('lago_pro_3d_key');
+            }
+
+            // 최종 확인: 이름이나 키가 비어있으면 단독 접속(권한 없음)으로 처리
+            if (!accessName || !accessKey) {
+                $('auth-spinner').style.display = 'none';
+                $('auth-title').innerText = "접근 권한 없음 🚫";
+                $('auth-title').classList.add("text-red-400");
+                $('auth-desc').innerHTML = "LAGO PRO 3D는 단독으로 실행할 수 없습니다.<br>LAGO PRO 메인(2D) 에디터에서 인증을 거쳐야 합니다.";
+                $('auth-action-container').innerHTML = `<a href="https://ramalok3846.github.io/lagoprotest/" class="w-full inline-block bg-gradient-to-r from-violet-600 to-pink-600 text-white py-3.5 rounded-xl font-bold hover:brightness-110 transition shadow-lg shadow-violet-900/40">LAGO PRO 메인으로 이동</a>`;
                 return;
             }
 
-            // 정보가 확인되면 파이어베이스 검증 실행
+            // 올바르게 인식되었다면 파이어베이스 검증 시작!
             verifyAndLogin(accessName, accessKey);
         };
 
-        // 개발 및 예외 처리를 위한 수동 로그인 기능
+        // 수동 로그인 (디버깅용)
         window.manualLoginSubmit = function() {
             const n = $('manual-name').value.trim();
             const k = $('manual-key').value.trim();
             if(n && k) {
-                $('auth-spinner').style.display = 'block';
-                $('auth-title').innerText = "접속 권한 확인 중";
-                $('auth-title').classList.remove("text-red-400");
                 $('auth-action-container').innerHTML = '';
                 verifyAndLogin(n, k);
             }
