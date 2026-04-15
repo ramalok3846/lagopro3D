@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAGO PRO 3D - Physics Editor</title>
+
+    <!-- Firebase SDK (호환 버전) -->
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+        :root {
+            --brand-primary: #8b5cf6;
+            --brand-secondary: #ec4899;
+            --bg-editor: #0f172a;
+            --sidebar-bg: rgba(15, 23, 42, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-editor);
+            color: var(--text-main);
+            margin: 0;
+            overflow: hidden;
+            height: 100vh;
+            user-select: none;
+        }
+
+        /* --- 자동 인증 전용 화면 스타일 --- */
+        .auth-section { 
+            display: flex; height: 100vh; width: 100vw; flex-direction: column; justify-content: center; align-items: center; 
+            position: absolute; top: 0; left: 0; z-index: 10000; 
+            opacity: 0; visibility: hidden; transform: translateY(-10px); transition: all 0.5s ease-in-out;
+            background-color: var(--bg-editor); 
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+        .auth-section.active { opacity: 1; visibility: visible; transform: translateY(0); }
+
+        .auth-card { 
+            background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            padding: 40px 30px; border-radius: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); 
+            width: 100%; max-width: 420px; text-align: center; border: 1px solid var(--glass-border); 
+            color: #f8fafc;
+        }
+
+        /* 스피너 애니메이션 */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: var(--brand-primary);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* --- 에디터 메인 컨테이너 --- */
+        #app-container {
+            opacity: 0; visibility: hidden; transform: scale(0.98); transition: all 0.5s ease-in-out; z-index: 1;
+            height: 100vh; width: 100vw; position: absolute; top:0; left:0;
+            display: flex; flex-direction: column;
+        }
+        #app-container.active {
+            opacity: 1; visibility: visible; transform: scale(1);
+        }
+
+        /* LAGO PRO Glass UI Style */
+        .glass-ui {
+            background: var(--sidebar-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+        }
+
+        .gradient-text {
+            background: linear-gradient(135deg, #a78bfa, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .tool-item {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            color: var(--text-muted);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .tool-item:hover:not(.active) { background: rgba(255, 255, 255, 0.05); color: white; }
+        .tool-item.active { background: var(--brand-primary); color: white; box-shadow: 0 0 15px rgba(139, 92, 246, 0.4); }
+
+        #viewport {
+            position: absolute; top: 64px; left: 80px; right: 320px; bottom: 0;
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 40px 40px; z-index: 0;
+        }
+
+        .input-lago {
+            width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; padding: 12px 16px; font-size: 14px; color: white; outline: none; transition: all 0.2s;
+            margin-bottom: 10px;
+        }
+        .input-lago:focus { border-color: var(--brand-primary); background: rgba(255,255,255,0.1); }
+        .input-lago::placeholder { color: #64748b; }
+
+        input[type="range"] { accent-color: var(--brand-primary); height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; -webkit-appearance: none; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: white; border-radius: 50%; cursor: pointer; }
+        input[type="color"] { -webkit-appearance: none; border: none; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; background: none; padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 8px; }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        .btn-action {
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; color: #e2e8f0; transition: all 0.2s; cursor: pointer;
+        }
+        .btn-action:hover { background: rgba(255,255,255,0.1); border-color: var(--brand-primary); }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body class="antialiased">
+
+    <!-- ========================================== -->
+    <!-- [1] 키 인증 자동 감지 섹션 -->
+    <!-- ========================================== -->
+    <div id="login-section" class="auth-section active">
+        <div class="auth-card">
+            <div class="font-black text-3xl tracking-tighter text-white flex items-center justify-center gap-1.5 mb-6">
+                LAGO <span class="gradient-text font-black tracking-tight">3D</span> 🔒
+            </div>
+            
+            <div id="auth-spinner" class="spinner"></div>
+
+            <h3 id="auth-title" class="text-xl font-bold text-white mb-2">접속 권한 확인 중</h3>
+            <p id="auth-desc" class="text-[13px] text-slate-400 font-medium mb-6 line-height-relaxed">
+                서버와 통신하여 접근 권한을 확인하고 있습니다...
+            </p>
+            
+            <!-- 단독 접속 등 권한 실패 시 나타날 UI -->
+            <div id="auth-action-container"></div>
+
+            <!-- 디버깅용 수동 로그인 폼 (평소에는 숨김) -->
+            <div id="debug-login-form" style="display:none; margin-top: 20px;">
+                <input type="text" id="manual-name" class="input-lago" placeholder="이름">
+                <input type="password" id="manual-key" class="input-lago font-mono" placeholder="접속 키">
+                <button onclick="window.manualLoginSubmit()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl text-sm font-bold mt-2 transition">수동 인증 시도</button>
+            </div>
+            <button onclick="document.getElementById('debug-login-form').style.display='block'" class="mt-6 text-[10px] text-slate-600 hover:text-slate-400 underline transition">테스트용 수동 로그인 폼 열기</button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- [2] 3D 에디터 메인 (인증 성공 시 표시됨) -->
+    <!-- ========================================== -->
+    <div id="app-container">
+        <!-- Top Header -->
+        <header class="h-16 border-b border-white/10 flex items-center justify-between px-6 glass-ui relative z-50">
+            <div class="flex items-center gap-6">
+                <div class="font-black text-2xl tracking-tighter text-white flex items-center gap-1.5">
+                    LAGO <span class="gradient-text font-black tracking-tight">3D</span>
+                </div>
+                <div class="h-6 w-px bg-white/10 mx-2"></div>
+                
+                <div class="flex items-center gap-3">
+                    <button id="btn-play" class="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold transition hover:bg-emerald-500/30">
+                        <div id="status-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                        <span id="play-text">PLAYING</span>
+                    </button>
+                    <button id="btn-gravity" class="px-3 py-1.5 bg-brand-primary text-white rounded-lg text-xs font-bold transition hover:opacity-80">
+                        GRAVITY: ON
+                    </button>
+                    <div class="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg">
+                        <span class="text-[10px] font-bold text-slate-400">VAL</span>
+                        <input type="number" id="input-gravity" value="-9.8" step="0.5" class="w-12 bg-transparent text-white text-xs font-mono outline-none text-right">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <div class="text-right border-r border-white/10 pr-4 hidden sm:block">
+                    <div class="text-[10px] text-brand-primary uppercase font-bold tracking-widest flex items-center justify-end gap-1">
+                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1zm-5 8.274l-.818 2.552c.25.112.526.174.818.174.292 0 .569-.062.818-.174L5 10.274zm10 0l-.818 2.552c.25.112.526.174.818.174.292 0 .569-.062.818-.174L15 10.274z" clip-rule="evenodd"></path></svg>
+                        PRO MEMBER
+                    </div>
+                    <div id="editor-username" class="text-sm font-semibold text-white tracking-tight">USER</div>
+                </div>
+
+                <div class="text-right border-r border-white/10 pr-4 hidden sm:block">
+                    <div class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">FPS</div>
+                    <div id="fps-display" class="text-sm font-mono text-emerald-400 font-bold">60</div>
+                </div>
+
+                <button id="btn-clear" class="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-bold rounded-xl transition border border-red-500/20">
+                    Clear All
+                </button>
+                <button onclick="window.handleLogout()" class="px-3 py-2 bg-white/5 hover:bg-white/10 text-white text-xs font-bold rounded-xl transition border border-white/10" title="종료 및 메인으로">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                </button>
+            </div>
+        </header>
+
+        <div class="flex flex-1 relative">
+            <aside class="w-20 glass-ui border-r border-white/10 flex flex-col items-center py-6 gap-4 z-40">
+                <div class="text-[10px] text-slate-500 font-bold mb-2">SPAWN</div>
+                <button id="spawn-cube" class="tool-item w-12 h-12 rounded-xl" title="Add Cube">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                </button>
+                <button id="spawn-sphere" class="tool-item w-12 h-12 rounded-xl" title="Add Sphere">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"></circle></svg>
+                </button>
+                <button id="spawn-cylinder" class="tool-item w-12 h-12 rounded-xl" title="Add Cylinder">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path></svg>
+                </button>
+                <button id="spawn-cone" class="tool-item w-12 h-12 rounded-xl" title="Add Cone">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2L2 20h20L12 2z"></path></svg>
+                </button>
+                
+                <div class="w-10 h-px bg-white/10 my-2"></div>
+                
+                <div class="text-[10px] text-slate-500 font-bold mb-2">TOOLS</div>
+                <button id="tool-translate" class="tool-item active w-12 h-12 rounded-xl" title="Move (W)">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 21h4M12 21v-4m0-14v4m0-4L9 6m3-3l3 3M4 12h4m-4 0l3-3m-3 3l3 3m14-3h-4m4 0l-3 3m3-3l-3-3"></path></svg>
+                </button>
+                <button id="tool-rotate" class="tool-item w-12 h-12 rounded-xl" title="Rotate (E)">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9"></path></svg>
+                </button>
+                <button id="tool-scale" class="tool-item w-12 h-12 rounded-xl" title="Scale (R)">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5"></path></svg>
+                </button>
+            </aside>
+
+            <!-- 3D Canvas Area -->
+            <div id="viewport"></div>
+
+            <!-- Right Properties Panel -->
+            <aside class="w-80 glass-ui border-l border-white/10 flex flex-col z-40 absolute right-0 top-0 bottom-0" id="properties-panel">
+                <div id="panel-empty" class="flex-1 flex flex-col items-center justify-center p-6 text-center opacity-100 transition-opacity">
+                    <svg class="w-12 h-12 text-slate-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                    <p class="text-sm text-slate-400 font-medium">객체를 선택하여<br>속성을 편집하세요</p>
+                </div>
+
+                <div id="panel-selected" class="hidden flex-1 flex flex-col overflow-hidden">
+                    <div class="p-5 border-b border-white/10">
+                        <div class="flex justify-between items-center mb-1">
+                            <span id="obj-type" class="text-xs font-black text-brand-primary uppercase tracking-widest">CUBE</span>
+                            <button id="btn-delete" class="text-red-400 hover:text-red-300 transition" title="Delete (Del)">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                        <span id="obj-id" class="text-[10px] text-slate-500 font-mono">ID: #0000</span>
+                    </div>
+
+                    <div class="flex-1 overflow-y-auto p-5 space-y-6">
+                        <section>
+                            <label class="text-[10px] font-black text-slate-500 mb-3 block uppercase tracking-widest">Transform</label>
+                            <div class="grid grid-cols-3 gap-2">
+                                <div>
+                                    <span class="text-[9px] text-slate-500 block text-center mb-1">X</span>
+                                    <input type="text" id="prop-px" class="input-lago text-center font-mono" readonly>
+                                </div>
+                                <div>
+                                    <span class="text-[9px] text-slate-500 block text-center mb-1">Y</span>
+                                    <input type="text" id="prop-py" class="input-lago text-center font-mono" readonly>
+                                </div>
+                                <div>
+                                    <span class="text-[9px] text-slate-500 block text-center mb-1">Z</span>
+                                    <input type="text" id="prop-pz" class="input-lago text-center font-mono" readonly>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section>
+                            <label class="text-[10px] font-black text-slate-500 mb-3 block uppercase tracking-widest">Material</label>
+                            <div class="flex items-center gap-3 mb-4 p-3 bg-white/5 border border-white/5 rounded-xl">
+                                <input type="color" id="prop-color">
+                                <div class="flex-1">
+                                    <div class="text-xs font-semibold text-white">Color</div>
+                                    <div class="text-[10px] text-slate-400">Base Albedo</div>
+                                </div>
+                            </div>
+
+                            <div class="space-y-4">
+                                <div>
+                                    <div class="flex justify-between text-[10px] font-bold text-slate-400 mb-1">
+                                        <span>Roughness</span><span id="val-rough">0.5</span>
+                                    </div>
+                                    <input type="range" id="prop-roughness" min="0" max="1" step="0.05" class="w-full">
+                                </div>
+                                <div>
+                                    <div class="flex justify-between text-[10px] font-bold text-slate-400 mb-1">
+                                        <span>Metalness</span><span id="val-metal">0.2</span>
+                                    </div>
+                                    <input type="range" id="prop-metalness" min="0" max="1" step="0.05" class="w-full">
+                                </div>
+                            </div>
+                        </section>
+
+                        <section>
+                            <label class="text-[10px] font-black text-brand-primary mb-3 block uppercase tracking-widest">Physics Dynamics</label>
+                            <div class="space-y-4 p-4 bg-brand-primary/10 border border-brand-primary/20 rounded-xl">
+                                <div>
+                                    <div class="flex justify-between text-[10px] font-bold text-slate-300 mb-1">
+                                        <span>Bounciness (Restitution)</span><span id="val-bounce">0.5</span>
+                                    </div>
+                                    <input type="range" id="prop-bounce" min="0" max="1" step="0.05" class="w-full">
+                                </div>
+                                <div>
+                                    <div class="flex justify-between text-[10px] font-bold text-slate-300 mb-1">
+                                        <span>Friction</span><span id="val-fric">0.3</span>
+                                    </div>
+                                    <input type="range" id="prop-friction" min="0" max="1" step="0.05" class="w-full">
+                                </div>
+                                <div class="pt-2 flex gap-2">
+                                    <button id="btn-reset-vel" class="btn-action flex-1 text-center">Stop Motion</button>
+                                    <button id="btn-clone" class="btn-action flex-1 text-center border-brand-primary text-brand-primary">Clone</button>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+                
+                <div class="h-12 border-t border-white/10 flex items-center justify-between px-5 text-[10px] text-slate-500 font-mono">
+                    <span>ENTITIES: <span id="stat-count" class="text-white font-bold">0</span></span>
+                    <span>ENGINE: CUSTOM</span>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 스크립트 영역 (Firebase Auth + Engine) -->
+    <!-- ========================================== -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+        const $ = id => document.getElementById(id);
+
+        // --- 1. 철통보안 자동 인증 시스템 로직 (LocalStorage 우선) ---
+        const firebaseConfig = { 
+            databaseURL: "https://class-chat-6-7-default-rtdb.asia-southeast1.firebasedatabase.app/" 
+        };
+        if (!window.firebase.apps.length) {
+            window.firebase.initializeApp(firebaseConfig);
+        }
+        const db = window.firebase.database();
+
+        // 파이어베이스 검증을 수행하는 공통 함수
+        async function verifyAndLogin(accessName, accessKey) {
+            const authTitle = $('auth-title');
+            const authDesc = $('auth-desc');
+            const authAction = $('auth-action-container');
+            const authSpinner = $('auth-spinner');
+
+            try {
+                const snap = await db.ref('lago_pro_3d_keys/' + accessName).once('value');
+                const data = snap.val();
+
+                if (data && data.key === accessKey) {
+                    // 인증 성공!
+                    $('editor-username').innerText = accessName;
+                    
+                    // 로컬 스토리지에 확실하게 저장 (다음 접속 시 파라미터 없어도 되도록)
+                    localStorage.setItem('lago_pro_3d_name', accessName);
+                    localStorage.setItem('lago_pro_3d_key', accessKey);
+
+                    // --- [수정됨] URL 정리 기능 제거 ---
+                    // 개발 환경이나 Blob URL에서 발생할 수 있는 DOMException 방지
+                    // window.history.replaceState({}, document.title, window.location.pathname); 
+
+                    $('login-section').classList.remove('active');
+                    $('app-container').classList.add('active');
+                    
+                    if (!window.lagoEngineInstance) {
+                        setTimeout(() => {
+                            window.lagoEngineInstance = new LagoEngine();
+                        }, 200);
+                    }
+                } else {
+                    // 인증 실패
+                    localStorage.removeItem('lago_pro_3d_name');
+                    localStorage.removeItem('lago_pro_3d_key');
+
+                    authSpinner.style.display = 'none';
+                    authTitle.innerText = "인증 실패 ❌";
+                    authTitle.classList.add("text-red-400");
+                    authDesc.innerHTML = "권한이 만료되었거나 키가 일치하지 않습니다.<br>메인 에디터에서 다시 로그인해주세요.";
+                    authAction.innerHTML = `<a href="https://ramalok3846.github.io/lagoprotest/" class="w-full inline-block bg-white/10 hover:bg-white/20 text-white border border-white/10 py-3.5 rounded-xl font-bold transition">메인으로 돌아가기</a>`;
+                }
+            } catch (e) {
+                console.error(e);
+                authSpinner.style.display = 'none';
+                authTitle.innerText = "통신 오류 📡";
+                authDesc.innerText = "서버와 연결할 수 없습니다. 잠시 후 다시 시도해주세요.";
+            }
+        }
+
+        window.onload = async function() {
+            const authTitle = $('auth-title');
+            const authDesc = $('auth-desc');
+            const authAction = $('auth-action-container');
+            const authSpinner = $('auth-spinner');
+
+            // 1순위: 로컬 스토리지에서 먼저 찾기 (가장 안전하고 URL 노출 없음)
+            let accessName = localStorage.getItem('lago_pro_3d_name');
+            let accessKey = localStorage.getItem('lago_pro_3d_key');
+
+            // 2순위: 로컬 스토리지에 없으면 URL 파라미터에서 추출 시도 (정규식 기반 강력한 추출)
+            if (!accessName || !accessKey) {
+                try {
+                    const href = window.location.href;
+                    // 해시(#) 뒤에 붙거나 파라미터 사이에 붙는 경우 등 모두 대응
+                    const nameMatch = href.match(/[?&]name=([^&#]*)/);
+                    const keyMatch = href.match(/[?&]key=([^&#]*)/);
+                    
+                    // 한글 인코딩(%EC%B5%9C...) 깨짐 방지를 위해 decodeURIComponent 사용
+                    if (nameMatch) accessName = decodeURIComponent(nameMatch[1]);
+                    if (keyMatch) accessKey = decodeURIComponent(keyMatch[1]);
+                } catch(e) {
+                    console.warn("URL 파싱 에러", e);
+                }
+            }
+
+            // 둘 다 아무것도 찾지 못한 경우 (단독 접속 시도)
+            if (!accessName || !accessKey) {
+                authSpinner.style.display = 'none';
+                authTitle.innerText = "접근 권한 없음 🚫";
+                authTitle.classList.add("text-red-400");
+                authDesc.innerHTML = "LAGO PRO 3D는 단독으로 실행할 수 없습니다.<br>LAGO PRO 메인 에디터에서 인증을 거쳐야 합니다.";
+                authAction.innerHTML = `<a href="https://ramalok3846.github.io/lagoprotest/" class="w-full inline-block bg-gradient-to-r from-violet-600 to-pink-600 text-white py-3.5 rounded-xl font-bold hover:brightness-110 transition shadow-lg shadow-violet-900/40">LAGO PRO 메인으로 이동</a>`;
+                return;
+            }
+
+            // 정보가 확인되면 파이어베이스 검증 실행
+            verifyAndLogin(accessName, accessKey);
+        };
+
+        // 개발 및 예외 처리를 위한 수동 로그인 기능
+        window.manualLoginSubmit = function() {
+            const n = $('manual-name').value.trim();
+            const k = $('manual-key').value.trim();
+            if(n && k) {
+                $('auth-spinner').style.display = 'block';
+                $('auth-title').innerText = "접속 권한 확인 중";
+                $('auth-title').classList.remove("text-red-400");
+                $('auth-action-container').innerHTML = '';
+                verifyAndLogin(n, k);
+            }
+        };
+
+        // 로그아웃 시 로컬 스토리지 비우고 메인으로 강제 이동
+        window.handleLogout = function() {
+            localStorage.removeItem('lago_pro_3d_name');
+            localStorage.removeItem('lago_pro_3d_key');
+            window.location.href = "https://ramalok3846.github.io/lagoprotest/";
+        };
+
+        // --- 2. LAGO PRO 3D 엔진 로직 ---
+        class LagoEngine {
+            constructor() {
+                this.GRAVITY = -9.81; 
+                this.SUBSTEPS = 4; 
+                this.DAMPING = 0.98; 
+                this.SLEEP_VELOCITY = 0.5; 
+
+                this.entities = [];
+                this.selected = null;
+                this.isPlaying = true;
+                this.useGravity = true;
+                this.clock = new THREE.Clock();
+
+                this.frameCount = 0;
+                this.lastTime = performance.now();
+
+                this.init();
+            }
+
+            init() {
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color('#0f172a');
+                this.scene.fog = new THREE.Fog('#0f172a', 30, 150);
+
+                const vp = document.getElementById('viewport');
+                this.camera = new THREE.PerspectiveCamera(45, vp.clientWidth / vp.clientHeight, 0.1, 1000);
+                this.camera.position.set(20, 20, 30);
+                
+                this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+                this.renderer.setSize(vp.clientWidth, vp.clientHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); 
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                vp.appendChild(this.renderer.domElement);
+
+                const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+                this.scene.add(ambient);
+
+                const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+                dirLight.position.set(15, 30, 15);
+                dirLight.castShadow = true;
+                dirLight.shadow.mapSize.width = 1024;
+                dirLight.shadow.mapSize.height = 1024;
+                dirLight.shadow.camera.near = 0.5;
+                dirLight.shadow.camera.far = 100;
+                const d = 30;
+                dirLight.shadow.camera.left = -d;
+                dirLight.shadow.camera.right = d;
+                dirLight.shadow.camera.top = d;
+                dirLight.shadow.camera.bottom = -d;
+                this.scene.add(dirLight);
+
+                const hemiLight = new THREE.HemisphereLight(0x8b5cf6, 0x0f172a, 0.6);
+                this.scene.add(hemiLight);
+
+                const grid = new THREE.GridHelper(100, 50, 0x334155, 0x1e293b);
+                grid.position.y = 0;
+                this.scene.add(grid);
+
+                const floorMat = new THREE.MeshStandardMaterial({ 
+                    color: 0x0f172a, roughness: 0.8, metalness: 0.2
+                });
+                const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), floorMat);
+                floor.rotation.x = -Math.PI / 2;
+                floor.position.y = -0.01; 
+                floor.receiveShadow = true;
+                this.scene.add(floor);
+
+                this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.dampingFactor = 0.05;
+                this.controls.maxPolarAngle = Math.PI / 2 - 0.05; 
+
+                this.transform = new TransformControls(this.camera, this.renderer.domElement);
+                this.transform.addEventListener('dragging-changed', (e) => {
+                    this.controls.enabled = !e.value;
+                    if (this.selected) {
+                        this.selected.userData.vel.set(0,0,0);
+                        this.selected.userData.isSleeping = false;
+                    }
+                });
+                this.scene.add(this.transform);
+
+                this.raycaster = new THREE.Raycaster();
+                this.mouse = new THREE.Vector2();
+
+                this.bindEvents();
+                this.startLoop();
+
+                setTimeout(() => {
+                    this.spawn('cube', new THREE.Vector3(-3, 10, 0), 0x8b5cf6);
+                    this.spawn('sphere', new THREE.Vector3(3, 15, 0), 0xec4899);
+                }, 100);
+            }
+
+            bindEvents() {
+                $('btn-play').onclick = () => {
+                    this.isPlaying = !this.isPlaying;
+                    $('play-text').innerText = this.isPlaying ? "PLAYING" : "PAUSED";
+                    $('btn-play').className = this.isPlaying 
+                        ? "flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold transition hover:bg-emerald-500/30"
+                        : "flex items-center gap-2 px-3 py-1.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-bold transition hover:bg-amber-500/30";
+                    $('status-dot').className = this.isPlaying ? "w-2 h-2 rounded-full bg-emerald-400 animate-pulse" : "w-2 h-2 rounded-full bg-amber-400";
+                    if(this.isPlaying) this.entities.forEach(e => e.userData.isSleeping = false);
+                };
+
+                $('btn-gravity').onclick = () => {
+                    this.useGravity = !this.useGravity;
+                    $('btn-gravity').innerText = this.useGravity ? "GRAVITY: ON" : "GRAVITY: OFF";
+                    $('btn-gravity').className = this.useGravity
+                        ? "px-3 py-1.5 bg-brand-primary text-white rounded-lg text-xs font-bold transition hover:opacity-80"
+                        : "px-3 py-1.5 bg-white/10 text-slate-400 border border-white/10 rounded-lg text-xs font-bold transition hover:bg-white/20";
+                    if(this.useGravity) this.entities.forEach(e => e.userData.isSleeping = false);
+                };
+
+                $('input-gravity').oninput = (e) => {
+                    this.GRAVITY = parseFloat(e.target.value) || 0;
+                    if(this.useGravity) this.entities.forEach(ent => ent.userData.isSleeping = false);
+                };
+
+                $('btn-clear').onclick = () => {
+                    [...this.entities].forEach(e => this.removeEntity(e));
+                };
+
+                $('spawn-cube').onclick = () => this.spawn('cube');
+                $('spawn-sphere').onclick = () => this.spawn('sphere');
+                $('spawn-cylinder').onclick = () => this.spawn('cylinder');
+                $('spawn-cone').onclick = () => this.spawn('cone');
+
+                const setGizmo = (mode, btnId) => {
+                    this.transform.setMode(mode);
+                    ['tool-translate', 'tool-rotate', 'tool-scale'].forEach(id => {
+                        $(id).classList.toggle('active', id === btnId);
+                    });
+                };
+                $('tool-translate').onclick = () => setGizmo('translate', 'tool-translate');
+                $('tool-rotate').onclick = () => setGizmo('rotate', 'tool-rotate');
+                $('tool-scale').onclick = () => setGizmo('scale', 'tool-scale');
+
+                $('prop-color').oninput = e => {
+                    if(this.selected) this.selected.material.color.set(e.target.value);
+                };
+                $('prop-roughness').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.material.roughness = parseFloat(e.target.value);
+                    $('val-rough').innerText = e.target.value;
+                };
+                $('prop-metalness').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.material.metalness = parseFloat(e.target.value);
+                    $('val-metal').innerText = e.target.value;
+                };
+                $('prop-bounce').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.userData.restitution = parseFloat(e.target.value);
+                    $('val-bounce').innerText = e.target.value;
+                };
+                $('prop-friction').oninput = e => {
+                    if(!this.selected) return;
+                    this.selected.userData.friction = parseFloat(e.target.value);
+                    $('val-fric').innerText = e.target.value;
+                };
+                $('btn-reset-vel').onclick = () => {
+                    if(this.selected) {
+                        this.selected.userData.vel.set(0,0,0);
+                        this.selected.userData.isSleeping = true;
+                    }
+                };
+                $('btn-clone').onclick = () => {
+                    if(this.selected) {
+                        const c = this.selected.material.color.getHex();
+                        this.spawn(this.selected.userData.type, this.selected.position.clone().add(new THREE.Vector3(2, 2, 0)), c);
+                    }
+                };
+                $('btn-delete').onclick = () => {
+                    if(this.selected) this.removeEntity(this.selected);
+                };
+
+                const vp = document.getElementById('viewport');
+                vp.addEventListener('pointerdown', (e) => {
+                    if (this.transform.dragging) return;
+                    const rect = vp.getBoundingClientRect();
+                    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+                    
+                    this.raycaster.setFromCamera(this.mouse, this.camera);
+                    const intersects = this.raycaster.intersectObjects(this.entities);
+                    
+                    if (intersects.length > 0) this.select(intersects[0].object);
+                    else this.select(null);
+                });
+
+                window.addEventListener('keydown', (e) => {
+                    if(e.target.tagName === 'INPUT') return;
+                    const key = e.key.toLowerCase();
+                    if (key === 'w') $('tool-translate').click();
+                    if (key === 'e') $('tool-rotate').click();
+                    if (key === 'r') $('tool-scale').click();
+                    if (key === 'delete' || key === 'backspace') $('btn-delete').click();
+                });
+
+                window.addEventListener('resize', () => {
+                    if($('app-container').classList.contains('active')){
+                        const rect = vp.getBoundingClientRect();
+                        this.camera.aspect = rect.width / rect.height;
+                        this.camera.updateProjectionMatrix();
+                        this.renderer.setSize(rect.width, rect.height);
+                    }
+                });
+            }
+
+            spawn(type, pos, hexColor) {
+                let geo;
+                if (type === 'cube') geo = new THREE.BoxGeometry(2, 2, 2);
+                else if (type === 'sphere') geo = new THREE.SphereGeometry(1.2, 32, 32);
+                else if (type === 'cylinder') geo = new THREE.CylinderGeometry(1, 1, 2, 32);
+                else if (type === 'cone') geo = new THREE.ConeGeometry(1.2, 2.5, 32);
+
+                const color = hexColor || new THREE.Color().setHSL(Math.random(), 0.7, 0.6).getHex();
+
+                const mat = new THREE.MeshStandardMaterial({
+                    color: color, roughness: 0.3, metalness: 0.2
+                });
+
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+
+                mesh.position.copy(pos || new THREE.Vector3(
+                    (Math.random() - 0.5) * 10, 15 + Math.random() * 5, (Math.random() - 0.5) * 10
+                ));
+
+                let radius = Math.sqrt(3);
+                if (type === 'sphere') radius = 1.2;
+                else if (type === 'cylinder') radius = 1.4;
+                else if (type === 'cone') radius = 1.3;
+
+                mesh.userData = {
+                    type, vel: new THREE.Vector3(0, 0, 0), mass: 1.0,
+                    restitution: 0.5, friction: 0.4, isSleeping: false, radius: radius 
+                };
+
+                this.scene.add(mesh);
+                this.entities.push(mesh);
+                $('stat-count').innerText = this.entities.length;
+                
+                this.select(mesh);
+                return mesh;
+            }
+
+            removeEntity(obj) {
+                this.scene.remove(obj);
+                if(obj.geometry) obj.geometry.dispose();
+                if(obj.material) obj.material.dispose();
+                this.entities = this.entities.filter(e => e !== obj);
+                if(this.selected === obj) this.select(null);
+                $('stat-count').innerText = this.entities.length;
+            }
+
+            select(obj) {
+                this.selected = obj;
+                const pEmpty = document.getElementById('panel-empty');
+                const pSel = document.getElementById('panel-selected');
+                
+                if (obj) {
+                    this.transform.attach(obj);
+                    pEmpty.classList.add('hidden');
+                    pSel.classList.remove('hidden');
+                    
+                    $('obj-type').innerText = obj.userData.type;
+                    $('obj-id').innerText = `ID: #${obj.id}`;
+                    $('prop-color').value = "#" + obj.material.color.getHexString();
+                    
+                    $('prop-roughness').value = obj.material.roughness;
+                    $('val-rough').innerText = obj.material.roughness.toFixed(2);
+                    
+                    $('prop-metalness').value = obj.material.metalness;
+                    $('val-metal').innerText = obj.material.metalness.toFixed(2);
+                    
+                    $('prop-bounce').value = obj.userData.restitution;
+                    $('val-bounce').innerText = obj.userData.restitution.toFixed(2);
+                    
+                    $('prop-friction').value = obj.userData.friction;
+                    $('val-fric').innerText = obj.userData.friction.toFixed(2);
+                } else {
+                    this.transform.detach();
+                    pEmpty.classList.remove('hidden');
+                    pSel.classList.add('hidden');
+                }
+            }
+
+            solvePhysics(dt) {
+                if (!this.isPlaying) return;
+
+                const safeDt = Math.min(dt, 0.05); 
+                const sdt = safeDt / this.SUBSTEPS;
+
+                for (let step = 0; step < this.SUBSTEPS; step++) {
+                    for (let i = 0; i < this.entities.length; i++) {
+                        const ent = this.entities[i];
+                        if (ent === this.selected && this.transform.dragging) continue;
+                        
+                        const p = ent.userData;
+                        if (p.isSleeping) continue;
+
+                        if (this.useGravity) p.vel.y += this.GRAVITY * sdt;
+                        p.vel.multiplyScalar(this.DAMPING);
+                        ent.position.addScaledVector(p.vel, sdt);
+
+                        const scaleY = ent.scale.y;
+                        let floorY = scaleY; 
+                        if (p.type === 'sphere') floorY = p.radius * scaleY;
+                        else if (p.type === 'cone') floorY = 1.25 * scaleY;
+                        
+                        if (ent.position.y < floorY) {
+                            ent.position.y = floorY;
+                            if (p.vel.y < 0) {
+                                if (Math.abs(p.vel.y) < this.SLEEP_VELOCITY) {
+                                    p.vel.y = 0;
+                                    p.vel.x *= (1 - p.friction);
+                                    p.vel.z *= (1 - p.friction);
+                                    if (p.vel.lengthSq() < 0.01) {
+                                        p.isSleeping = true;
+                                        p.vel.set(0,0,0);
+                                    }
+                                } else {
+                                    p.vel.y *= -p.restitution;
+                                }
+                            }
+                        }
+
+                        for (let j = i + 1; j < this.entities.length; j++) {
+                            this.resolveCollision(ent, this.entities[j]);
+                        }
+
+                        if (ent.position.y < -50 || ent.position.length() > 200) {
+                            ent.position.set(0, 20, 0);
+                            p.vel.set(0,0,0);
+                        }
+                    }
+                }
+            }
+
+            resolveCollision(a, b) {
+                const pa = a.userData;
+                const pb = b.userData;
+
+                const distVec = new THREE.Vector3().subVectors(a.position, b.position);
+                const distSq = distVec.lengthSq();
+                
+                const ra = pa.type === 'sphere' ? pa.radius * a.scale.x : a.scale.x * 1.3;
+                const rb = pb.type === 'sphere' ? pb.radius * b.scale.x : b.scale.x * 1.3;
+                const minDist = ra + rb;
+
+                if (distSq < minDist * minDist && distSq > 0.001) {
+                    const dist = Math.sqrt(distSq);
+                    const normal = distVec.divideScalar(dist);
+                    const overlap = minDist - dist;
+
+                    a.position.addScaledVector(normal, overlap * 0.5);
+                    b.position.addScaledVector(normal, -overlap * 0.5);
+
+                    pa.isSleeping = false;
+                    pb.isSleeping = false;
+
+                    const relVel = new THREE.Vector3().subVectors(pa.vel, pb.vel);
+                    const sepVel = relVel.dot(normal);
+
+                    if (sepVel < 0) {
+                        const e = Math.min(pa.restitution, pb.restitution);
+                        const j = -(1 + e) * sepVel / (1/pa.mass + 1/pb.mass) * 1.5;
+
+                        pa.vel.addScaledVector(normal, j / pa.mass);
+                        pb.vel.addScaledVector(normal, -j / pb.mass);
+                    }
+                }
+            }
+
+            startLoop() {
+                const animate = () => {
+                    requestAnimationFrame(animate);
+
+                    const dt = this.clock.getDelta();
+                    this.solvePhysics(dt);
+
+                    this.controls.update();
+                    this.renderer.render(this.scene, this.camera);
+
+                    if (this.selected) {
+                        document.getElementById('prop-px').value = this.selected.position.x.toFixed(1);
+                        document.getElementById('prop-py').value = this.selected.position.y.toFixed(1);
+                        document.getElementById('prop-pz').value = this.selected.position.z.toFixed(1);
+                    }
+
+                    this.frameCount++;
+                    const now = performance.now();
+                    if (now - this.lastTime >= 1000) {
+                        document.getElementById('fps-display').innerText = this.frameCount;
+                        this.frameCount = 0;
+                        this.lastTime = now;
+                    }
+                };
+                animate();
+            }
+        }
+    </script>
+</body>
+</html>
